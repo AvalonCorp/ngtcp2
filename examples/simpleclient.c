@@ -263,6 +263,7 @@ static int send_message_to_server(ngtcp2_conn *conn, void * user_data, char *mes
    return 0;
 }
 
+// EXCALIBUR API
 static int send_test_message_to_server(ngtcp2_conn *conn, void * user_data) {
     if(!uuid) {
         fprintf(debug_file, "Can't send messages to Excalibur: still waiting to receive UUID\n");
@@ -304,6 +305,7 @@ static int extend_max_local_streams_uni(ngtcp2_conn *conn,
 //    send_hello_message_to_server(conn, user_data);
 //}
 
+// EXCALIBUR API
 static int send_hello_message_to_server (ngtcp2_conn *conn, void * user_data) {
 
     if (!hello_message) {
@@ -456,11 +458,16 @@ static int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id
          fprintf(debug_file, "]\n");
 
         uuid = data;
-    }
+
 
       // TODO: should be a separate thread/ev_loop sending messages on an interval
-     send_test_message_to_server(conn, user_data);
+        send_test_message_to_server(conn, user_data);
+    }
 
+    else{
+        fprintf(debug_file, "RECEIVED RELIABLE MESSAGE %s len: %ld\n", data, datalen);
+        // do something with reliable message
+    }
     return 0;
 }
 
