@@ -8876,7 +8876,7 @@ static ngtcp2_ssize conn_recv_pkt(ngtcp2_conn *conn, const ngtcp2_path *path,
     if (!ngtcp2_cid_eq(&conn->dcid.current.cid, &hd.scid)) {
       ngtcp2_log_rx_pkt_hd(&conn->log, &hd);
       ngtcp2_log_info(&conn->log, NGTCP2_LOG_EVENT_PKT,
-                      "packet was ignored because of mismatched SCID");
+                      "packet was ignored because of mismatched SCID: dcid.current.cid: %ld vs. HD.SCID: %ld\n", &conn->dcid.current.cid.data, &hd.scid.data);
       return NGTCP2_ERR_DISCARD_PKT;
     }
 

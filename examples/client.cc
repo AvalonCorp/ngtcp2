@@ -1046,7 +1046,7 @@ int Client::write_streams() {
         return spktlen;
         
     }
-    
+
 /* TODO create call back and refactor this one for unreliable messages
     void test_ngtcp2_conn_writev_datagram(void) {
         ngtcp2_conn* conn;
@@ -1185,7 +1185,7 @@ int Client::write_streams() {
 }
 */
 
-/* 
+/*
 int Client::write_streams() {
   std::array<ngtcp2_vec, 16> vec;
   ngtcp2_path_storage ps;
@@ -1205,7 +1205,7 @@ int Client::write_streams() {
       sveccnt = ngtcp2_conn_writev_stream(conn_, &stream_id, &fin,
                                            vec.data(), vec.size());
       if (sveccnt < 0) {
-        std::cerr << "nghttp3_conn_writev_stream: " << nghttp3_strerror(sveccnt)
+        std::cerr << "ngtcp2_conn_writev_stream: " << sveccnt
                   << std::endl;
         //ngtcp2_ccerr_set_application_error(
         //    &last_error_, nghttp3_err_infer_quic_app_error_code(sveccnt),
