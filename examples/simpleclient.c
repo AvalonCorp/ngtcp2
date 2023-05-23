@@ -237,6 +237,7 @@ static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
   return 0;
 }
 
+// EXCALIBUR API
 // Interface for sending messages to Excalibur (not the initial message after which we expect UUID)
 static int send_message_to_server(ngtcp2_conn *conn, void * user_data, char *message){
   struct client *c = user_data;
@@ -442,9 +443,11 @@ static int client_send_packet(struct client *c, const uint8_t *data,
   return 0;
 }
 
+// ngtcp2 CALLBACK
 static int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen, void *user_data, void *stream_user_data) {
     fprintf(debug_file, "CB: RECV_STREAM_DATA, STREAM_ID: %ld, DATA: %s\n", stream_id, data);
 
+    // EXCALIBUR API
     if (!uuid) {
         fprintf(debug_file, "Does this look like UUID? %s len: %ld\n", data, datalen);
 
@@ -453,23 +456,9 @@ static int recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id
          fprintf(debug_file, "]\n");
 
         uuid = data;
-
-
-        // UUID from Excalibur received
-        // TODO: start new thread here producing messages to send to Excalibur
-
-            // pthread_t thread;
-
-            // This loop sits in the pthread
-            // input_loop = ev_loop_new(0);
-
-            // ev_io_init (&stdin_watcher, stdin_cb, /*STDIN_FILENO*/ 0, EV_READ);
-            // ev_io_start (input_loop, &stdin_watcher);
-
-            //pthread_create(&thread, NULL, input_loop_thread, {client, user_data});
     }
 
-        // should be a separate thread/ev_loop sending messages on an interval
+      // TODO: should be a separate thread/ev_loop sending messages on an interval
      send_test_message_to_server(conn, user_data);
 
     return 0;
@@ -972,34 +961,26 @@ void* input_loop_thread(void* user_data)
     return NULL;
 }
 
-int main(void) {
-  // struct client c;
-
+int init_debug_file(){
     char * debug_file_name;
     if (asprintf(&debug_file_name, "debug.%ld.txt", timestamp())) {
         debug_file = fopen(debug_file_name, "w");
         if (!debug_file) {
            fprintf(stderr, "File opening failed!\n");
-           exit(EXIT_FAILURE);
+           return 1;
         }
     }
     else {
         printf("Couldn't allocate debug_file!");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
-  srandom((unsigned int)timestamp());
+    return 0;
+}
 
-  if (client_init(&client) != 0) {
-    exit(EXIT_FAILURE);
-  }
-
-  if (client_write(&client) != 0) {
-    exit(EXIT_FAILURE);
-  }
-
+pthread_t start_async_input_loop(){
     // deprecated this async loop listening on the input source, stdin, a file, a random generator, etc.)
-    // pthread_t thread;
+    pthread_t thread;
 
     // This loop sits in the pthread
     // input_loop = ev_loop_new(0);
@@ -1009,13 +990,36 @@ int main(void) {
 
     //pthread_create(&thread, NULL, input_loop_thread, NULL);
 
+    return thread;
+}
+int main(void) {
+
+   if (init_debug_file() != 0){
+        exit(EXIT_FAILURE);
+   }
+
+  srandom((unsigned int) timestamp());
+
+  if (client_init(&client) != 0) {
+    exit(EXIT_FAILURE);
+  }
+
+  // THIS also initiates the handshake as it calls ngtcp2_conn_writev_stream down the line
+  // which in turn initiates the handshake if it's not yet completed
+  if (client_write(&client) != 0) {
+    exit(EXIT_FAILURE);
+  }
+
+    // TODO: implement
+    // input_loop_thread = start_async_input_loop();
 
     // Main loop listening on the socket
     ev_run(EV_DEFAULT, 0);
 
-   // pthread_join(thread, NULL);
+    // TODO: uncomment when implemented
+   // pthread_join(input_loop_thread, NULL);
 
-  client_free(&client);
+    client_free(&client);
 
-  return 0;
+    return 0;
 }
