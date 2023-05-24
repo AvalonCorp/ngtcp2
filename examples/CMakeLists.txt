@@ -116,3 +116,40 @@ if(LIBEV_FOUND AND HAVE_BORINGSSL)
 
 endif()
 
+message(WARNING LIBUV_FOUND=${LIBUV_FOUND})
+
+if(LIBUV_FOUND AND HAVE_OPENSSL)
+  set(client_SOURCES
+    ngtcp2_simpleclient.cpp
+  )
+
+  set(ossl_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/lib/includes
+    ${CMAKE_BINARY_DIR}/lib/includes
+    ${CMAKE_SOURCE_DIR}/third-party
+    ${CMAKE_SOURCE_DIR}/crypto/includes
+
+    ${JEMALLOC_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIRS}
+    ${LIBUV_INCLUDE_DIRS}
+  )
+
+  set(ossl_LIBS
+    ngtcp2_crypto_openssl
+    ngtcp2
+    ${JEMALLOC_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+  )
+
+  add_executable(client ${client_SOURCES})
+
+  set_target_properties(client PROPERTIES
+    COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
+  )
+
+  target_include_directories(client PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(client ${ossl_LIBS})
+
+endif()
+
