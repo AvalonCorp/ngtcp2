@@ -54,3 +54,8 @@ lib/ngtcp2.dir/
 lib/ngtcp2_static.dir/
 x64/
 Testing/Temporary/
+examples/ngtcp2_sample_client.dir/
+examples/Debug
+examples/Debug/*.txt
+*.vcxproj.user
+examples/simpleclient.dir

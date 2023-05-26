@@ -118,9 +118,46 @@ endif()
 
 message(WARNING LIBUV_FOUND=${LIBUV_FOUND})
 
-if(LIBUV_FOUND AND HAVE_OPENSSL)
+if(LIBUV_FOUND AND HAVE_OPENSSL AND WIN32)
   set(client_SOURCES
     ngtcp2_simpleclient.cpp
+  )
+
+  set(ossl_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/lib/includes
+    ${CMAKE_BINARY_DIR}/lib/includes
+    ${CMAKE_SOURCE_DIR}/third-party
+    ${CMAKE_SOURCE_DIR}/crypto/includes
+
+    ${JEMALLOC_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIRS}
+    ${LIBUV_INCLUDE_DIRS}
+  )
+
+  set(ossl_static_LIBS
+    ngtcp2_crypto_openssl_static
+    ngtcp2_static
+    wsock32
+    ws2_32
+    ${JEMALLOC_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+  )
+
+  add_executable(ngtcp2_sample_client ${client_SOURCES})
+
+  set_target_properties(ngtcp2_sample_client PROPERTIES
+    COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
+  )
+
+  target_include_directories(ngtcp2_sample_client PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(ngtcp2_sample_client ${ossl_static_LIBS})
+
+endif()
+
+if(LIBUV_FOUND AND HAVE_OPENSSL AND UNIX)
+  set(client_SOURCES
+    simpleclient.c
   )
 
   set(ossl_INCLUDE_DIRS
@@ -142,14 +179,14 @@ if(LIBUV_FOUND AND HAVE_OPENSSL)
     ${LIBUV_LIBRARIES}
   )
 
-  add_executable(client ${client_SOURCES})
+  add_executable(simpleclient ${client_SOURCES})
 
-  set_target_properties(client PROPERTIES
+  set_target_properties(simpleclient PROPERTIES
     COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
   )
 
-  target_include_directories(client PUBLIC ${ossl_INCLUDE_DIRS})
-  target_link_libraries(client ${ossl_LIBS})
+  target_include_directories(simpleclient PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(simpleclient ${ossl_LIBS})
 
 endif()
 

@@ -1,4 +1,7 @@
 /*
+* 
+* 
+* 
  * ngtcp2
  *
  * Copyright (c) 2021 ngtcp2 contributors
@@ -56,21 +59,37 @@
 #include "uv.h"
 
 #define REMOTE_HOST "127.0.0.1"
-#define REMOTE_PORT "5000"
-#define ALPN "h2"
-#define MESSAGE "POST /\r\n HelloWorld"
+#define REMOTE_PORT "2023"
+//#define ALPN "h2"
 
-/*
- * Example 1: Handshake with www.google.com
- *
- * #define REMOTE_HOST "www.google.com"
- * #define REMOTE_PORT "443"
- * #define ALPN "\x2h3"
- *
- * and undefine MESSAGE macro.
- */
+FILE* debug_file;
+
+int message_index = 0;
+
+char* hello_message = "HELLO Excalibur!";
+const uint8_t* uuid = NULL;
+char* messages[] = {
+"First",
+"Second",
+"Third",
+"Fourth",
+"Fifth",
+"Sixth",
+"Seventh"
+};
+
+// Excalibur API
+static int send_hello_message_to_server(ngtcp2_conn*, void*);
+static int extend_max_local_streams_bidi(ngtcp2_conn*, uint64_t, void*);
+static int send_test_message_to_server(ngtcp2_conn*, void*);
+static int send_message_to_server(ngtcp2_conn*, void*, char*);
 
 
+//////////////////////////////////////////
+//
+// Utility Functions
+//
+//////////////////////////////////////////
 LARGE_INTEGER
 getFILETIMEoffset()
 {
@@ -142,6 +161,58 @@ static uint64_t timestamp(void) {
   return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_usec;
 }
 
+static int numeric_host_family(const char* hostname, int family) {
+    uint8_t dst[sizeof(struct in6_addr)];
+    return inet_pton(family, hostname, dst) == 1;
+}
+
+static int numeric_host(const char* hostname) {
+    return numeric_host_family(hostname, AF_INET) ||
+        numeric_host_family(hostname, AF_INET6);
+}
+
+
+
+
+///////////////////////////////
+//
+// ngtcp2 structures
+//
+///////////////////////////////
+
+struct client {
+    ngtcp2_crypto_conn_ref conn_ref;
+    int fd;
+    struct sockaddr_storage local_addr;
+    struct sockaddr_storage remote_addr;
+    socklen_t local_addrlen;
+    SSL_CTX* ssl_ctx;
+    SSL* ssl;
+    ngtcp2_conn* conn;
+
+    struct {
+        int64_t stream_id;
+        const uint8_t* data;
+        size_t datalen;
+        size_t nwrite;
+    } stream;
+
+    ngtcp2_ccerr last_error;
+
+
+    uv_loop_t uv_loop;
+    uv_timer_t timer;
+    uint64_t repeat;
+    uv_poll_t handlePoll;
+
+};
+
+///////////////////////////////
+//
+// ngtcp2 callback functions
+//
+///////////////////////////////
+
 static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
                        const char *host, const char *port) {
   struct addrinfo hints = {0};
@@ -160,6 +231,11 @@ static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
     wVersionRequested = MAKEWORD(2, 2);
 
   err = WSAStartup(wVersionRequested, &wsaData);
+  if (err != 0)
+  {
+      fprintf(stderr, "couldn't load winsocket2 dll.");
+      return -1;
+  }
   rv = getaddrinfo(host, port, &hints, &res);
   if (rv != 0) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
@@ -210,74 +286,7 @@ static int connect_sock(struct sockaddr *local_addr, socklen_t *plocal_addrlen,
   return 0;
 }
 
-struct client {
-    ngtcp2_crypto_conn_ref conn_ref;
-    int fd;
-    struct sockaddr_storage local_addr;
-    struct sockaddr_storage remote_addr;
-    socklen_t local_addrlen;
-    SSL_CTX *ssl_ctx;
-    SSL *ssl;
-    ngtcp2_conn *conn;
 
-    struct {
-    int64_t stream_id;
-    const uint8_t *data;
-    size_t datalen;
-    size_t nwrite;
-    } stream;
-
-    ngtcp2_connection_close_error last_error;
-    
-    
-    uv_loop_t uv_loop;
-    uv_timer_t timer;
-    uint64_t repeat;
-    uv_poll_t handlePoll;
-
-};
-
-static int numeric_host_family(const char *hostname, int family) {
-  uint8_t dst[sizeof(struct in6_addr)];
-  return inet_pton(family, hostname, dst) == 1;
-}
-
-static int numeric_host(const char *hostname) {
-  return numeric_host_family(hostname, AF_INET) ||
-         numeric_host_family(hostname, AF_INET6);
-}
-
-static int client_ssl_init(struct client *c) {
-  c->ssl_ctx = SSL_CTX_new(TLS_client_method());
-  if (!c->ssl_ctx) {
-    fprintf(stderr, "SSL_CTX_new: %s\n",
-            ERR_error_string(ERR_get_error(), NULL));
-    return -1;
-  }
-
-  if (ngtcp2_crypto_openssl_configure_client_context(c->ssl_ctx) != 0) {
-    fprintf(stderr, "ngtcp2_crypto_openssl_configure_client_context failed\n");
-    return -1;
-  }
-
-  c->ssl = SSL_new(c->ssl_ctx);
-  if (!c->ssl) {
-    fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
-    return -1;
-  }
-
-  SSL_set_app_data(c->ssl, &c->conn_ref);
-  SSL_set_connect_state(c->ssl);
-  SSL_set_alpn_protos(c->ssl, (const unsigned char *)ALPN, sizeof(ALPN) - 1);
-  if (!numeric_host(REMOTE_HOST)) {
-    SSL_set_tlsext_host_name(c->ssl, REMOTE_HOST);
-  }
-
-  /* For NGTCP2_PROTO_VER_V1 */
-  SSL_set_quic_transport_version(c->ssl, TLSEXT_TYPE_quic_transport_parameters);
-
-  return 0;
-}
 
 static void rand_cb(uint8_t *dest, size_t destlen,
                     const ngtcp2_rand_ctx *rand_ctx) {
@@ -308,166 +317,107 @@ static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
   return 0;
 }
 
-static int extend_max_local_streams_bidi(ngtcp2_conn *conn,
-                                         uint64_t max_streams,
-                                         void *user_data) {
-#ifdef MESSAGE
-    struct client *c = (struct client *)user_data;  
-    int rv;
-  int64_t stream_id;
-  (void)max_streams;
 
-  if (c->stream.stream_id != -1) {
+int handshake_completed(ngtcp2_conn* conn, void* user_data) {
+
+    fprintf(debug_file, "CB: HANDSHAKE COMPLETED!\n");
+    fflush(debug_file);
+
+    send_hello_message_to_server(conn, user_data);
+
     return 0;
-  }
+}
 
-  rv = ngtcp2_conn_open_bidi_stream(conn, &stream_id, NULL);
-  if (rv != 0) {
+int handshake_confirmed(ngtcp2_conn* conn, void* user_data) {
+
+    fprintf(debug_file, "CB: HANDSHAKE CONFIRMED!\n");
+    fflush(debug_file);
+
     return 0;
-  }
-
-  c->stream.stream_id = stream_id;
-  c->stream.data = (const uint8_t *)MESSAGE;
-  c->stream.datalen = sizeof(MESSAGE) - 1;
-
-  return 0;
-#else  /* !MESSAGE */
-  (void)conn;
-  (void)max_streams;
-  (void)user_data;
-
-  return 0;
-#endif /* !MESSAGE */
 }
 
-static void log_printf(void *user_data, const char *fmt, ...) {
-  va_list ap;
-  (void)user_data;
 
-  va_start(ap, fmt);
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
-
-  fprintf(stderr, "\n");
+int stream_open(ngtcp2_conn* conn, int64_t stream_id, void* user_data) {
+    fprintf(debug_file, "CB: STREAM_OPEN, stream_id: %ld\n", stream_id);
+    return 0;
 }
 
-static int client_quic_init(struct client *c,
-                            const struct sockaddr *remote_addr,
-                            socklen_t remote_addrlen,
-                            const struct sockaddr *local_addr,
-                            socklen_t local_addrlen) {
-  ngtcp2_path path = {
-      {
-          (struct sockaddr *)local_addr,
-          local_addrlen,
-      },
-      {
-          (struct sockaddr *)remote_addr,
-          remote_addrlen,
-      },
-      NULL,
-  };
-  ngtcp2_callbacks callbacks = {
-      ngtcp2_crypto_client_initial_cb,
-      NULL, /* recv_client_initial */
-      ngtcp2_crypto_recv_crypto_data_cb,
-      NULL, /* handshake_completed */
-      NULL, /* recv_version_negotiation */
-      ngtcp2_crypto_encrypt_cb,
-      ngtcp2_crypto_decrypt_cb,
-      ngtcp2_crypto_hp_mask_cb,
-      NULL, /* recv_stream_data */
-      NULL, /* acked_stream_data_offset */
-      NULL, /* stream_open */
-      NULL, /* stream_close */
-      NULL, /* recv_stateless_reset */
-      ngtcp2_crypto_recv_retry_cb,
-      extend_max_local_streams_bidi,
-      NULL, /* extend_max_local_streams_uni */
-      rand_cb,
-      get_new_connection_id_cb,
-      NULL, /* remove_connection_id */
-      ngtcp2_crypto_update_key_cb,
-      NULL, /* path_validation */
-      NULL, /* select_preferred_address */
-      NULL, /* stream_reset */
-      NULL, /* extend_max_remote_streams_bidi */
-      NULL, /* extend_max_remote_streams_uni */
-      NULL, /* extend_max_stream_data */
-      NULL, /* dcid_status */
-      NULL, /* handshake_confirmed */
-      NULL, /* recv_new_token */
-      ngtcp2_crypto_delete_crypto_aead_ctx_cb,
-      ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
-      NULL, /* recv_datagram */
-      NULL, /* ack_datagram */
-      NULL, /* lost_datagram */
-      ngtcp2_crypto_get_path_challenge_data_cb,
-      NULL, /* stream_stop_sending */
-      ngtcp2_crypto_version_negotiation_cb,
-      NULL, /* recv_rx_key */
-      NULL, /* recv_tx_key */
-      NULL, /* early_data_rejected */
-  };
-  ngtcp2_cid dcid, scid;
-  ngtcp2_settings settings;
-  ngtcp2_transport_params params;
-  int rv;
 
-  dcid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN;
-  if (RAND_bytes(dcid.data, (int)dcid.datalen) != 1) {
-    fprintf(stderr, "RAND_bytes failed\n");
-    return -1;
-  }
-
-  scid.datalen = 8;
-  if (RAND_bytes(scid.data, (int)scid.datalen) != 1) {
-    fprintf(stderr, "RAND_bytes failed\n");
-    return -1;
-  }
-
-  ngtcp2_settings_default(&settings);
-
-  settings.initial_ts = timestamp();
-  settings.log_printf = log_printf;
-
-  ngtcp2_transport_params_default(&params);
-
-  params.initial_max_streams_uni = 3;
-  params.initial_max_stream_data_bidi_local = 128 * 1024;
-  params.initial_max_data = 1024 * 1024;
-
-  rv =
-      ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
-                             &callbacks, &settings, &params, NULL, c);
-  if (rv != 0) {
-    fprintf(stderr, "ngtcp2_conn_client_new: %s\n", ngtcp2_strerror(rv));
-    return -1;
-  }
-
-  ngtcp2_conn_set_tls_native_handle(c->conn, c->ssl);
-
-  return 0;
+int stream_close(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t app_error_code, void* user_data, void* stream_user_data) {
+    struct client* c = static_cast<struct client*>(user_data);
+    fprintf(debug_file, "CB: STREAM_CLOSE, closed stream_id: %ld, client stream_id: %ld, ERROR_CODE: %ld\n", stream_id, c->stream.stream_id, app_error_code);
+    return 0;
 }
+
+int recv_datagram(ngtcp2_conn* conn, uint32_t flags, const uint8_t* data, size_t datalen, void* user_data) {
+
+    fprintf(debug_file, "CB: RECV_DATAGRAM %s", data);
+
+    return 0;
+}
+
+int ack_datagram(ngtcp2_conn* conn, uint64_t dgram_id, void* user_data) {
+    fprintf(debug_file, "CB: ACK_DATAGRAM!!! %ld", dgram_id);
+
+    return 0;
+}
+
+int lost_datagram(ngtcp2_conn* conn, uint64_t dgram_id, void* user_data) {
+    fprintf(debug_file, "CB: LOST_DATAGRAM!!! %ld", dgram_id);
+
+    return 0;
+}
+
+int stream_reset(ngtcp2_conn* conn, int64_t stream_id, uint64_t final_size, uint64_t app_error_code, void* user_data, void* stream_user_data) {
+    fprintf(debug_file, "STREAM RESET! STREAM_ID: %ld\n", stream_id);
+    return 0;
+}
+
+// ngtcp2 CALLBACK
+static int recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t* data, size_t datalen, void* user_data, void* stream_user_data) {
+    fprintf(debug_file, "CB: RECV_STREAM_DATA, STREAM_ID: %ld, DATA: %s\n", stream_id, data);
+
+    // EXCALIBUR API
+    if (!uuid) {
+        fprintf(debug_file, "Does this look like UUID? ");
+        fprintf(debug_file, "  [");
+        for (int i = 0; i < datalen; i++) { fprintf(debug_file, "%d, ", data[i]); }
+        fprintf(debug_file, "]\n");
+
+        uuid = data;
+
+
+        // TODO: should be a separate thread/ev_loop sending messages on an interval
+        send_test_message_to_server(conn, user_data);
+    }
+
+    else {
+        fprintf(debug_file, "RECEIVED RELIABLE MESSAGE %s len: %ld\n", data, datalen);
+        // do something with reliable message
+    }
+    return 0;
+}
+
+
 
 
 static int client_read(struct client *c) {
   uint8_t buf[65536];
   struct sockaddr_storage addr{};
   int addrlen = sizeof(addr);
-    WSABUF wsabuf;
-    wsabuf.buf = (CHAR*)buf;
-    wsabuf.len = sizeof(buf);  DWORD nread;
   ngtcp2_path path;
   ngtcp2_pkt_info pi = {0};
   int rv;
 
   for (;;) {
     int nread = recv(c->fd, (CHAR*)buf, sizeof(buf), 0);
+
+    //fprintf(debug_file, "[CLIENT READ] %ld\n", nread);
+
     if ( nread< 0) 
     {
       if (WSAGetLastError() != WSAEWOULDBLOCK) {
-        fprintf(stderr, "WSARecvFrom: %d\n", WSAGetLastError());
+        fprintf(debug_file, "recv: %d\n", WSAGetLastError());
       }
 
       break;
@@ -484,19 +434,25 @@ static int client_read(struct client *c) {
       fprintf(stderr, "ngtcp2_conn_read_pkt: %s\n", ngtcp2_strerror(rv));
       if (!c->last_error.error_code) {
         if (rv == NGTCP2_ERR_CRYPTO) {
-          ngtcp2_connection_close_error_set_transport_error_tls_alert(
+            ngtcp2_ccerr_set_tls_alert(
               &c->last_error, ngtcp2_conn_get_tls_alert(c->conn), NULL, 0);
         } else {
-          ngtcp2_connection_close_error_set_transport_error_liberr(
+            ngtcp2_ccerr_set_liberr(
               &c->last_error, rv, NULL, 0);
         }
       }
       return -1;
     }
+    else {
+        fprintf(debug_file, "[CLIENT READ] %d bytes\n", nread);
+    }
   }
 
   return 0;
 }
+
+
+
 
 static int client_send_packet(struct client *c, const uint8_t *data,
                               size_t datalen) {
@@ -571,8 +527,7 @@ static int client_write_streams(struct client *c) {
       default:
         fprintf(stderr, "ngtcp2_conn_writev_stream: %s\n",
                 ngtcp2_strerror((int)nwrite));
-        ngtcp2_connection_close_error_set_transport_error_liberr(
-            &c->last_error, (int)nwrite, NULL, 0);
+        ngtcp2_ccerr_set_liberr(&c->last_error, (int)nwrite, NULL, 0);
         return -1;
       }
     }
@@ -699,55 +654,6 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
   return c->conn;
 }
 
-static int client_init(struct client *c) {
-  struct sockaddr_storage remote_addr, local_addr;
-  socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
-
-  memset(c, 0, sizeof(*c));
-
-  ngtcp2_connection_close_error_default(&c->last_error);
-
-  c->fd = create_sock((struct sockaddr *)&remote_addr, &remote_addrlen,
-                      REMOTE_HOST, REMOTE_PORT);
-  if (c->fd == -1) {
-    return -1;
-  }
-  if (connect_sock((struct sockaddr *)&local_addr, &local_addrlen, c->fd,
-                   (struct sockaddr *)&remote_addr, remote_addrlen) != 0) {
-    return -1;
-  }
-
-  memcpy(&c->local_addr, &local_addr, sizeof(c->local_addr));
-  c->local_addrlen = local_addrlen;
-
-  if (client_ssl_init(c) != 0) {
-    return -1;
-  }
-
-  if (client_quic_init(c, (struct sockaddr *)&remote_addr, remote_addrlen,
-                       (struct sockaddr *)&local_addr, local_addrlen) != 0) {
-    return -1;
-  }
-  c->remote_addr = remote_addr;
-  c->stream.stream_id = -1;
-
-  c->conn_ref.get_conn = get_conn;
-  c->conn_ref.user_data = c;
-
-  uv_loop_init(&c->uv_loop);
-
-  uv_poll_init_socket(&c->uv_loop, &c->handlePoll, c->fd);
-  uv_timer_init(&c->uv_loop, &c->timer);
-  c->handlePoll.data = c;
-  //
-  uv_poll_start(&c->handlePoll, UV_READABLE, read_cb);
-  //uv_poll_start(&c->handlePoll, UV_WRITABLE, write_cb);
-  
-  //uv_timer_start(&c->timer, timer_cb, 0, 0);
-  c->timer.data = c;
-
-  return 0;
-}
 
 static void client_free(struct client *c) {
   ngtcp2_conn_del(c->conn);
@@ -755,58 +661,448 @@ static void client_free(struct client *c) {
   SSL_CTX_free(c->ssl_ctx);
 }
 
+
+int init_debug_file() {
+    char debug_file_name[255];
+    if (snprintf(debug_file_name, 255, "debug.%ld.txt", timestamp())) {
+        debug_file = fopen(debug_file_name, "w");
+        if (!debug_file) {
+            fprintf(stderr, "File opening failed!\n");
+            return 1;
+        }
+
+        // Set the FILE to be line buffered
+        if (setvbuf(debug_file, NULL, _IONBF, 0) != 0) {
+            printf("Failed to set line buffering\n");
+            return -1;
+        }
+    }
+    else {
+        printf("Couldn't allocate debug_file!");
+        return 1;
+    }
+
+    return 0;
+}
+ 
+
+///////////////////////////////////
+//
+// ngtcp2 init functions
+//
+///////////////////////////////////
+
+static int client_ssl_init(struct client* c) {
+    c->ssl_ctx = SSL_CTX_new(TLS_client_method());
+    if (!c->ssl_ctx) {
+        fprintf(stderr, "SSL_CTX_new: %s\n",
+            ERR_error_string(ERR_get_error(), NULL));
+        return -1;
+    }
+
+    if (ngtcp2_crypto_openssl_configure_client_context(c->ssl_ctx) != 0) {
+        fprintf(stderr, "ngtcp2_crypto_openssl_configure_client_context failed\n");
+        return -1;
+    }
+
+    c->ssl = SSL_new(c->ssl_ctx);
+    if (!c->ssl) {
+        fprintf(stderr, "SSL_new: %s\n", ERR_error_string(ERR_get_error(), NULL));
+        return -1;
+    }
+
+    SSL_set_app_data(c->ssl, &c->conn_ref);
+    SSL_set_connect_state(c->ssl);
+    //SSL_set_alpn_protos(c->ssl, (const unsigned char *)ALPN, sizeof(ALPN) - 1);
+    if (!numeric_host(REMOTE_HOST)) {
+        SSL_set_tlsext_host_name(c->ssl, REMOTE_HOST);
+    }
+
+    /* For NGTCP2_PROTO_VER_V1 */
+    SSL_set_quic_transport_version(c->ssl, TLSEXT_TYPE_quic_transport_parameters);
+
+    return 0;
+}
+
+static void log_printf(void* user_data, const char* fmt, ...) {
+    va_list ap;
+    (void)user_data;
+
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+
+    fprintf(stderr, "\n");
+}
+
+static int client_quic_init(struct client* c,
+    const struct sockaddr* remote_addr,
+    socklen_t remote_addrlen,
+    const struct sockaddr* local_addr,
+    socklen_t local_addrlen) {
+    ngtcp2_path path = {
+        {
+            (struct sockaddr*)local_addr,
+            local_addrlen,
+        },
+        {
+            (struct sockaddr*)remote_addr,
+            remote_addrlen,
+        },
+        NULL,
+    };
+    ngtcp2_callbacks callbacks = {
+        ngtcp2_crypto_client_initial_cb,
+        NULL, /* recv_client_initial */
+        ngtcp2_crypto_recv_crypto_data_cb,
+        handshake_completed, /* handshake_completed */
+        NULL, /* recv_version_negotiation */
+        ngtcp2_crypto_encrypt_cb,
+        ngtcp2_crypto_decrypt_cb,
+        ngtcp2_crypto_hp_mask_cb,
+        recv_stream_data, /* recv_stream_data */
+        NULL, /* acked_stream_data_offset */
+        stream_open, /* stream_open */
+        stream_close, /* stream_close */
+        NULL, /* recv_stateless_reset */
+        ngtcp2_crypto_recv_retry_cb,
+        extend_max_local_streams_bidi,
+        NULL, /* extend_max_local_streams_uni */
+        rand_cb,
+        get_new_connection_id_cb,
+        NULL, /* remove_connection_id */
+        ngtcp2_crypto_update_key_cb,
+        NULL, /* path_validation */
+        NULL, /* select_preferred_address */
+        NULL, /* stream_reset */
+        NULL, /* extend_max_remote_streams_bidi */
+        NULL, /* extend_max_remote_streams_uni */
+        NULL, /* extend_max_stream_data */
+        NULL, /* dcid_status */
+        handshake_confirmed, /* handshake_confirmed */
+        NULL, /* recv_new_token */
+        ngtcp2_crypto_delete_crypto_aead_ctx_cb,
+        ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
+        recv_datagram, /* recv_datagram */
+        ack_datagram, /* ack_datagram */
+        lost_datagram, /* lost_datagram */
+        ngtcp2_crypto_get_path_challenge_data_cb,
+        NULL, /* stream_stop_sending */
+        ngtcp2_crypto_version_negotiation_cb,
+        NULL, /* recv_rx_key */
+        NULL, /* recv_tx_key */
+        NULL, /* early_data_rejected */
+    };
+    ngtcp2_cid dcid, scid;
+    ngtcp2_settings settings;
+    ngtcp2_transport_params params;
+    int rv;
+
+    dcid.datalen = NGTCP2_MIN_INITIAL_DCIDLEN;
+    if (RAND_bytes(dcid.data, (int)dcid.datalen) != 1) {
+        fprintf(stderr, "RAND_bytes failed\n");
+        return -1;
+    }
+
+    // COMMENTED OUT SINCE I DONT SEE THE PURPOSE
+    scid.datalen = 8;
+    if (RAND_bytes(scid.data, (int)scid.datalen) != 1) {
+        fprintf(stderr, "RAND_bytes failed\n");
+        return -1;
+    }
+
+    ngtcp2_settings_default(&settings);
+
+    settings.initial_ts = timestamp();
+    settings.log_printf = log_printf;
+
+    ngtcp2_transport_params_default(&params);
+
+    params.initial_max_streams_uni = 3;
+    params.initial_max_stream_data_bidi_local = 128 * 1024;
+    params.initial_max_data = 1024 * 1024;
+
+    rv =
+        ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
+            &callbacks, &settings, &params, NULL, c);
+    if (rv != 0) {
+        fprintf(stderr, "ngtcp2_conn_client_new: %s\n", ngtcp2_strerror(rv));
+        return -1;
+    }
+
+    ngtcp2_conn_set_tls_native_handle(c->conn, c->ssl);
+
+    return 0;
+}
+
+
+static int client_init(struct client* c) {
+    struct sockaddr_storage remote_addr, local_addr;
+    socklen_t remote_addrlen, local_addrlen = sizeof(local_addr);
+
+    memset(c, 0, sizeof(*c));
+
+    ngtcp2_ccerr_default(&c->last_error);
+
+    c->fd = create_sock((struct sockaddr*)&remote_addr, &remote_addrlen,
+        REMOTE_HOST, REMOTE_PORT);
+    if (c->fd == -1) {
+        printf("Failed to create socket\n");
+        return -1;
+    }
+    if (connect_sock((struct sockaddr*)&local_addr, &local_addrlen, c->fd,
+        (struct sockaddr*)&remote_addr, remote_addrlen) != 0) {
+        printf("Failed to connect to socket\n");
+        return -1;
+    }
+    else {
+        printf("Connected to socket\n");
+    }
+
+    memcpy(&c->local_addr, &local_addr, sizeof(c->local_addr));
+    c->local_addrlen = local_addrlen;
+
+    if (client_ssl_init(c) != 0) {
+        printf("Failed SSL init\n");
+        return -1;
+    }
+
+    printf("SSL init success!\n");
+
+    if (client_quic_init(c, (struct sockaddr*)&remote_addr, remote_addrlen,
+        (struct sockaddr*)&local_addr, local_addrlen) != 0) {
+        printf("Failed client_quic_ini\n");
+        return -1;
+    }
+
+    printf("client_quic_init SUCCESS!\n");
+
+    c->remote_addr = remote_addr;
+    c->stream.stream_id = -1;
+
+    c->conn_ref.get_conn = get_conn;
+    c->conn_ref.user_data = c;
+
+    // This is difference from linux
+    //
+    // TODO check diff. CHECK libuv!
+    uv_loop_init(&c->uv_loop);
+
+    uv_poll_init_socket(&c->uv_loop, &c->handlePoll, c->fd);
+    uv_timer_init(&c->uv_loop, &c->timer);
+    c->handlePoll.data = c;
+    //
+    uv_poll_start(&c->handlePoll, UV_READABLE, read_cb);
+    //uv_poll_start(&c->handlePoll, UV_WRITABLE, write_cb);
+
+    //uv_timer_start(&c->timer, timer_cb, 0, 0);
+    c->timer.data = c;
+
+    return 0;
+}
+
+/////////////////////////////////////////
+//
+// EXCALIBUR API
+//
+/////////////////////////////////////////
+
+
+// EXCALIBUR API
+// Interface for sending messages to Excalibur (not the initial message after which we expect UUID)
+static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* message) {
+    struct client* c = static_cast<struct client*>(user_data);
+    int rv;
+    int64_t stream_id;
+
+    if (c->stream.stream_id != -1) {
+        fprintf(debug_file, "Stream already opened %ld, not sending %s\n", c->stream.stream_id, message);
+        return 0;
+    }
+
+    rv = ngtcp2_conn_open_uni_stream(conn, &stream_id, NULL);
+    if (rv != 0) {
+        return 0;
+    }
+
+    fprintf(debug_file, "WRITING TO client uni: stream_id: %ld, message: %s, size: %ld\n", stream_id, message, strlen(message));
+    c->stream.stream_id = stream_id;
+    c->stream.data = (const uint8_t*)message;
+    c->stream.datalen = strlen(message);
+    fprintf(debug_file, "WROTE TO client uni: c->stream.stream_id %ld, c->stream.data %s, c->stream.datalen %ld\n", c->stream.stream_id, c->stream.data, c->stream.datalen);
+
+    return 0;
+}
+
+// EXCALIBUR API
+static int send_test_message_to_server(ngtcp2_conn* conn, void* user_data) {
+    if (!uuid) {
+        fprintf(debug_file, "Can't send messages to Excalibur: still waiting to receive UUID\n");
+        return 0;
+    }
+
+    char* message = "";
+    if (message_index < 7) {
+        message = messages[message_index];
+    }
+    else {
+        fprintf(debug_file, "No more messages to send, sending empty buffer to terminate connection\n");
+    }
+
+    fprintf(debug_file, "CURRENT MESSAGE: %s\n", message);
+
+    int ret = send_message_to_server(conn, user_data, message);
+
+    if (ret == 0) {
+        message_index++;
+    }
+
+    return ret;
+}
+
+
+// EXCALIBUR API
+static int send_hello_message_to_server(ngtcp2_conn* conn, void* user_data) {
+
+    if (!hello_message) {
+        fprintf(debug_file, "HELLO MESSAGE ALREADY SENT");
+        return 0;
+    }
+    char* message = hello_message;
+    fprintf(debug_file, "HELLO MESSAGE: %s\n", message);
+
+    struct client* c = static_cast<struct client*>(user_data);
+    int rv;
+    int64_t stream_id;
+
+    fprintf(debug_file, "CB: EXTEND_MAX_LOCAL_STREAMS_BIDI, STREAM_ID %ld\n", c->stream.stream_id);
+
+    if (c->stream.stream_id != -1) {
+        fprintf(debug_file, "Stream already opened %ld, not sending %s\n", c->stream.stream_id, message);
+        return 0;
+    }
+
+    rv = ngtcp2_conn_open_bidi_stream(conn, &stream_id, NULL);
+    if (rv != 0) {
+        return 0;
+    }
+
+
+    fprintf(debug_file, "WRITING TO client: stream_id: %lld, message: %s, size: %zd\n", stream_id, message, strlen(message));
+    c->stream.stream_id = stream_id;
+    c->stream.data = (const uint8_t*)message;
+    c->stream.datalen = strlen(message);
+    fprintf(debug_file, "WROTE TO client: c->stream.stream_id %ld, c->stream.data %s, c->stream.datalen %ld\n", c->stream.stream_id, c->stream.data, c->stream.datalen);
+
+    hello_message = NULL;
+    return 0;
+}
+
+
+
+////////////////////////
+//
+// UNUSED SECTION
+//
+////////////////////////
+
 #define HELLO_WORLD "hello world\n"
 
 // Function to send the "hello world" packet
-int send_hello_world_packet(struct client *c) {
-  int len = strlen(HELLO_WORLD);
+int send_hello_world_packet(struct client* c) {
+    int len = strlen(HELLO_WORLD);
 
-  // Create a new vector to hold the "hello world" message
-  std::vector<uint8_t> buf(len + 1);
-  memcpy(buf.data(), HELLO_WORLD, len);
-  buf[len] = '\0';
+    // Create a new vector to hold the "hello world" message
+    std::vector<uint8_t> buf(len + 1);
+    memcpy(buf.data(), HELLO_WORLD, len);
+    buf[len] = '\0';
 
-  // Call ngtcp2_conn_write_pkt to send the packet over QUIC
-  ngtcp2_pkt_info pi;
-  memset(&pi, 0, sizeof(pi));
+    // Call ngtcp2_conn_write_pkt to send the packet over QUIC
+    ngtcp2_pkt_info pi;
+    memset(&pi, 0, sizeof(pi));
     ngtcp2_ssize pdatalen = 0;
     ngtcp2_path_storage ps;
 
     // Call ngtcp2_conn_write_pkt to send the packet over QUIC
     ngtcp2_path_storage_zero(&ps);
     // the correct stream ID needs to go here rather than 0
-    /*ngtcp2_conn_writev_stream(ngtcp2_conn *conn, ngtcp2_path *path, ngtcp2_pkt_info *pi, uint8_t *dest, 
+    /*ngtcp2_conn_writev_stream(ngtcp2_conn *conn, ngtcp2_path *path, ngtcp2_pkt_info *pi, uint8_t *dest,
     size_t destlen, ngtcp2_ssize *pdatalen, uint32_t flags, int64_t stream_id, const ngtcp2_vec *datav, size_t datavcnt, ngtcp2_tstamp ts)
     */
-     auto start = std::chrono::system_clock::now();
-     int fin;
-     ngtcp2_vec datav;
-     size_t datavcnt;
-     ngtcp2_tstamp ts = std::chrono::system_clock::to_time_t(start);
-     datavcnt = client_get_message(c, &c->stream.stream_id, &fin, &datav, 1);
-       uint32_t flags;
+    auto start = std::chrono::system_clock::now();
+    int fin;
+    ngtcp2_vec datav;
+    size_t datavcnt;
+    ngtcp2_tstamp ts = std::chrono::system_clock::to_time_t(start);
+    datavcnt = client_get_message(c, &c->stream.stream_id, &fin, &datav, 1);
+    uint32_t flags;
 
     flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
     if (fin) {
         flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
     }
 
-   /* nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
-                                       &pdatalen, flags, c->stream.stream_id, &datav,
-                                       datavcnt, ts);*/
-     int rv = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf.data(), sizeof(buf), &pdatalen, flags, c->stream.stream_id,  &datav, datavcnt, ts);
-     //rv = ngtcp2_conn_write_stream(c->conn, &ps.path, &pi, buf.data(), len, &pdatalen, 0, c->stream.stream_id, buf.data(), len, ts);
-  if (rv != 0) {
-      //try it twice?
-      // rv = ngtcp2_conn_write_stream(c->conn, &ps.path, &pi, buf.data(), len, &pdatalen, 0, c->stream.stream_id, buf.data(), len, ts);
+    /* nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
+                                        &pdatalen, flags, c->stream.stream_id, &datav,
+                                        datavcnt, ts);*/
+    int rv = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf.data(), sizeof(buf), &pdatalen, flags, c->stream.stream_id, &datav, datavcnt, ts);
+    //rv = ngtcp2_conn_write_stream(c->conn, &ps.path, &pi, buf.data(), len, &pdatalen, 0, c->stream.stream_id, buf.data(), len, ts);
+    if (rv != 0) {
+        //try it twice?
+        // rv = ngtcp2_conn_write_stream(c->conn, &ps.path, &pi, buf.data(), len, &pdatalen, 0, c->stream.stream_id, buf.data(), len, ts);
 
-    return rv;
-  }
+        return rv;
+    }
 
-  return 0;
+    return 0;
 }
 
+static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
+    uint64_t max_streams,
+    void* user_data) {
+#ifdef MESSAGE
+    struct client* c = (struct client*)user_data;
+    int rv;
+    int64_t stream_id;
+    (void)max_streams;
+
+    if (c->stream.stream_id != -1) {
+        return 0;
+    }
+
+    rv = ngtcp2_conn_open_bidi_stream(conn, &stream_id, NULL);
+    if (rv != 0) {
+        return 0;
+    }
+
+    c->stream.stream_id = stream_id;
+    c->stream.data = (const uint8_t*)MESSAGE;
+    c->stream.datalen = sizeof(MESSAGE) - 1;
+
+    return 0;
+#else  /* !MESSAGE */
+    (void)conn;
+    (void)max_streams;
+    (void)user_data;
+
+    return 0;
+#endif /* !MESSAGE */
+}
+
+
+/////////////////////////////////////
+//
+// MAIN SECITON
+//
+/////////////////////////////////////
+
+
 int main(void) {
+
+    if (init_debug_file() != 0) {
+        exit(EXIT_FAILURE);
+    }
+
   struct client c = {};
 
   srand((unsigned int)timestamp());
@@ -814,16 +1110,13 @@ int main(void) {
   if (client_init(&c) != 0) {
     exit(EXIT_FAILURE);
   }
-  //int len = strlen(HELLO_WORLD);
-    /*std::vector<uint8_t> buf(len + 1);
-  memcpy(buf.data(), HELLO_WORLD, len);
-  buf[len] = '\0';*/
- 
-  //memcpy(buf.data(), HELLO_WORLD, len);
   
+  // THIS also initiates the handshake as it calls ngtcp2_conn_writev_stream down the line
+  // which in turn initiates the handshake if it's not yet completed
   if (client_write(&c) != 0) {
     exit(EXIT_FAILURE);
   }
+
   /*extend_max_local_streams_bidi(c.conn,
       10,
       &c);*/
