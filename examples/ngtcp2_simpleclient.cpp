@@ -67,7 +67,7 @@ FILE* debug_file;
 int message_index = 0;
 
 char* hello_message = "HELLO Excalibur!";
-const uint8_t* uuid = NULL;
+std::string uuid;
 char* messages[] = {
 "First",
 "Second",
@@ -317,11 +317,17 @@ static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
   return 0;
 }
 
+int remove_connection_id(ngtcp2_conn* conn, const ngtcp2_cid* cid, void* user_data)
+{
+    fprintf(debug_file, "CB: REMOVE CONNECTION ID!\n");
+    return 0;
+}
+
+
 
 int handshake_completed(ngtcp2_conn* conn, void* user_data) {
 
     fprintf(debug_file, "CB: HANDSHAKE COMPLETED!\n");
-    fflush(debug_file);
 
     send_hello_message_to_server(conn, user_data);
 
@@ -331,8 +337,6 @@ int handshake_completed(ngtcp2_conn* conn, void* user_data) {
 int handshake_confirmed(ngtcp2_conn* conn, void* user_data) {
 
     fprintf(debug_file, "CB: HANDSHAKE CONFIRMED!\n");
-    fflush(debug_file);
-
     return 0;
 }
 
@@ -346,6 +350,14 @@ int stream_open(ngtcp2_conn* conn, int64_t stream_id, void* user_data) {
 int stream_close(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t app_error_code, void* user_data, void* stream_user_data) {
     struct client* c = static_cast<struct client*>(user_data);
     fprintf(debug_file, "CB: STREAM_CLOSE, closed stream_id: %ld, client stream_id: %ld, ERROR_CODE: %ld\n", stream_id, c->stream.stream_id, app_error_code);
+
+
+    if (stream_id == c->stream.stream_id)
+    {
+        c->stream.stream_id = -1;
+        c->stream.nwrite = 0;
+    }
+
     return 0;
 }
 
@@ -378,13 +390,10 @@ static int recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id
     fprintf(debug_file, "CB: RECV_STREAM_DATA, STREAM_ID: %ld, DATA: %s\n", stream_id, data);
 
     // EXCALIBUR API
-    if (!uuid) {
-        fprintf(debug_file, "Does this look like UUID? ");
-        fprintf(debug_file, "  [");
-        for (int i = 0; i < datalen; i++) { fprintf(debug_file, "%d, ", data[i]); }
-        fprintf(debug_file, "]\n");
-
-        uuid = data;
+    if (uuid.empty()) {
+        // Display just the UUID (starts at character with offset 9)
+        fprintf(debug_file, "  Does this look like UUID? %s\n", data + 9);
+        uuid = (char*)data+9;
 
 
         // TODO: should be a separate thread/ev_loop sending messages on an interval
@@ -647,6 +656,8 @@ static void timer_cb(uv_timer_t *w) {
   if (client_write(c) != 0) {
     client_close(c);
   }
+
+  send_test_message_to_server(c->conn, c);
 }
 
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
@@ -770,7 +781,7 @@ static int client_quic_init(struct client* c,
         NULL, /* extend_max_local_streams_uni */
         rand_cb,
         get_new_connection_id_cb,
-        NULL, /* remove_connection_id */
+        remove_connection_id,
         ngtcp2_crypto_update_key_cb,
         NULL, /* path_validation */
         NULL, /* select_preferred_address */
@@ -895,7 +906,7 @@ static int client_init(struct client* c) {
     uv_poll_start(&c->handlePoll, UV_READABLE, read_cb);
     //uv_poll_start(&c->handlePoll, UV_WRITABLE, write_cb);
 
-    //uv_timer_start(&c->timer, timer_cb, 0, 0);
+    uv_timer_start(&c->timer, timer_cb, 0, 1000.f);
     c->timer.data = c;
 
     return 0;
@@ -936,7 +947,7 @@ static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* mess
 
 // EXCALIBUR API
 static int send_test_message_to_server(ngtcp2_conn* conn, void* user_data) {
-    if (!uuid) {
+    if (uuid.empty()) {
         fprintf(debug_file, "Can't send messages to Excalibur: still waiting to receive UUID\n");
         return 0;
     }
@@ -1005,6 +1016,7 @@ static int send_hello_message_to_server(ngtcp2_conn* conn, void* user_data) {
 // UNUSED SECTION
 //
 ////////////////////////
+#if 0
 
 #define HELLO_WORLD "hello world\n"
 
@@ -1056,6 +1068,7 @@ int send_hello_world_packet(struct client* c) {
 
     return 0;
 }
+#endif
 
 static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
     uint64_t max_streams,
