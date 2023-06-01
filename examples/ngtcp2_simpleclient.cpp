@@ -83,6 +83,8 @@ static int send_hello_message_to_server(ngtcp2_conn*, void*);
 static int extend_max_local_streams_bidi(ngtcp2_conn*, uint64_t, void*);
 static int send_test_message_to_server(ngtcp2_conn*, void*);
 static int send_message_to_server(ngtcp2_conn*, void*, char*);
+// When enabled, this callback will call send_test_message_to_server 
+static void timer_cb(uv_timer_t* w);
 
 
 //////////////////////////////////////////
@@ -90,75 +92,12 @@ static int send_message_to_server(ngtcp2_conn*, void*, char*);
 // Utility Functions
 //
 //////////////////////////////////////////
-LARGE_INTEGER
-getFILETIMEoffset()
-{
-    SYSTEMTIME s;
-    FILETIME f;
-    LARGE_INTEGER t;
 
-    s.wYear = 1970;
-    s.wMonth = 1;
-    s.wDay = 1;
-    s.wHour = 0;
-    s.wMinute = 0;
-    s.wSecond = 0;
-    s.wMilliseconds = 0;
-    SystemTimeToFileTime(&s, &f);
-    t.QuadPart = f.dwHighDateTime;
-    t.QuadPart <<= 32;
-    t.QuadPart |= f.dwLowDateTime;
-    return (t);
-}
-
-int
-clock_gettime(int X, struct timeval *tv)
-{
-    LARGE_INTEGER           t;
-    FILETIME            f;
-    double                  microseconds;
-    static LARGE_INTEGER    offset;
-    static double           frequencyToMicroseconds;
-    static int              initialized = 0;
-    static BOOL             usePerformanceCounter = 0;
-
-    if (!initialized) {
-        LARGE_INTEGER performanceFrequency;
-        initialized = 1;
-        usePerformanceCounter = QueryPerformanceFrequency(&performanceFrequency);
-        if (usePerformanceCounter) {
-            QueryPerformanceCounter(&offset);
-            frequencyToMicroseconds = (double)performanceFrequency.QuadPart / 1000000.;
-        } else {
-            offset = getFILETIMEoffset();
-            frequencyToMicroseconds = 10.;
-        }
-    }
-    if (usePerformanceCounter) QueryPerformanceCounter(&t);
-    else {
-        GetSystemTimeAsFileTime(&f);
-        t.QuadPart = f.dwHighDateTime;
-        t.QuadPart <<= 32;
-        t.QuadPart |= f.dwLowDateTime;
-    }
-
-    t.QuadPart -= offset.QuadPart;
-    microseconds = (double)t.QuadPart / frequencyToMicroseconds;
-    t.QuadPart = microseconds;
-    tv->tv_sec = t.QuadPart / 1000000;
-    tv->tv_usec = t.QuadPart % 1000000;
-    return (0);
-}
-
-static uint64_t timestamp(void) {
-  struct timeval tp;
-
-  if (clock_gettime(GetTickCount(), &tp) != 0) {
-    fprintf(stderr, "clock_gettime: %s\n", strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  return (uint64_t)tp.tv_sec * NGTCP2_SECONDS + (uint64_t)tp.tv_usec;
+std::chrono::time_point<std::chrono::steady_clock> timestamp_start = std::chrono::steady_clock::now();
+ngtcp2_tstamp timestamp() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - timestamp_start)
+        .count();
 }
 
 static int numeric_host_family(const char* hostname, int family) {
