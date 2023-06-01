@@ -138,7 +138,6 @@ struct client {
 
     ngtcp2_ccerr last_error;
 
-
     uv_loop_t uv_loop;
     uv_timer_t timer;
     uint64_t repeat;
@@ -167,10 +166,10 @@ static int create_sock(struct sockaddr *addr, socklen_t *paddrlen,
   int err;
 
   /* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
-    wVersionRequested = MAKEWORD(2, 2);
+   wVersionRequested = MAKEWORD(2, 2);
 
   err = WSAStartup(wVersionRequested, &wsaData);
-  if (err != 0)
+  if (err != 0) 
   {
       fprintf(stderr, "couldn't load winsocket2 dll.");
       return -1;
@@ -237,6 +236,12 @@ static void rand_cb(uint8_t *dest, size_t destlen,
   }
 }
 
+////////////////////
+// 
+// ngtcp2 CALLBACKS
+//
+///////////////////
+
 static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
                                     uint8_t *token, size_t cidlen,
                                     void *user_data) {
@@ -258,6 +263,7 @@ static int get_new_connection_id_cb(ngtcp2_conn *conn, ngtcp2_cid *cid,
 
 int remove_connection_id(ngtcp2_conn* conn, const ngtcp2_cid* cid, void* user_data)
 {
+    // TODO need unittests
     fprintf(debug_file, "CB: REMOVE CONNECTION ID!\n");
     return 0;
 }
@@ -279,14 +285,20 @@ int handshake_confirmed(ngtcp2_conn* conn, void* user_data) {
     return 0;
 }
 
-
+// ngtcp2_stream_open is a callback function which is called when remote stream is 
+// opened by a remote endpoint. This function is not called if stream is opened by 
+// implicitly (we might reconsider this behaviour later).
+//
+// The implementation of this callback should return 0 if it succeeds. Returning 
+// NGTCP2_ERR_CALLBACK_FAILURE makes the library call return immediately.
 int stream_open(ngtcp2_conn* conn, int64_t stream_id, void* user_data) {
+
     fprintf(debug_file, "CB: STREAM_OPEN, stream_id: %ld\n", stream_id);
     return 0;
 }
 
 
-int stream_close(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t app_error_code, void* user_data, void* stream_user_data) {
+int stream_close_cb(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t app_error_code, void* user_data, void* stream_user_data) {
     struct client* c = static_cast<struct client*>(user_data);
     fprintf(debug_file, "CB: STREAM_CLOSE, closed stream_id: %ld, client stream_id: %ld, ERROR_CODE: %ld\n", stream_id, c->stream.stream_id, app_error_code);
 
@@ -302,19 +314,19 @@ int stream_close(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id, uint64_t 
 
 int recv_datagram(ngtcp2_conn* conn, uint32_t flags, const uint8_t* data, size_t datalen, void* user_data) {
 
-    fprintf(debug_file, "CB: RECV_DATAGRAM %s", data);
+    fprintf(debug_file, "CB: RECV_DATAGRAM %s\n", data);
 
     return 0;
 }
 
 int ack_datagram(ngtcp2_conn* conn, uint64_t dgram_id, void* user_data) {
-    fprintf(debug_file, "CB: ACK_DATAGRAM!!! %ld", dgram_id);
+    fprintf(debug_file, "CB: ACK_DATAGRAM!!! %ld\n", dgram_id);
 
     return 0;
 }
 
 int lost_datagram(ngtcp2_conn* conn, uint64_t dgram_id, void* user_data) {
-    fprintf(debug_file, "CB: LOST_DATAGRAM!!! %ld", dgram_id);
+    fprintf(debug_file, "CB: LOST_DATAGRAM!!! %ld\n", dgram_id);
 
     return 0;
 }
@@ -371,11 +383,14 @@ static int client_read(struct client *c) {
       break;
     }
 
+    // TODO: shouldn't we be able to pass directly from client struct?
+    // one cache miss
     path.local.addrlen = c->local_addrlen;
     path.local.addr = (struct sockaddr *)&c->local_addr;
     path.remote.addrlen = sizeof(c->remote_addr);
     path.remote.addr = (struct sockaddr *)&c->remote_addr;
 
+    // TODO: revisit error handling here.
     rv = ngtcp2_conn_read_pkt(c->conn, &path, &pi, buf, (size_t)nread,
                               timestamp());
     if (rv != 0) {
@@ -426,6 +441,8 @@ static size_t client_get_message(struct client *c, int64_t *pstream_id,
   }
 
   if (c->stream.stream_id != -1 && c->stream.nwrite < c->stream.datalen) {
+    // I suspect here that seting pfin to 1 is an error here.
+    // pfin should probably be *pfin = 
     *pstream_id = c->stream.stream_id;
     *pfin = 1;
     datav->base = (uint8_t *)c->stream.data + c->stream.nwrite;
@@ -445,6 +462,13 @@ static int client_write_streams(struct client *c) {
   ngtcp2_tstamp ts = timestamp();
   ngtcp2_pkt_info pi;
   ngtcp2_ssize nwrite;
+  // TODO? buffer must be kept alive until we receive ngtcp2_callbacks.acked_stream_data_offset 
+  //
+  //  From https://nghttp2.org/ngtcp2/ngtcp2_conn_writev_stream.html:
+  //
+  //  The number of data encoded in STREAM frame is stored in *pdatalen if it is not NULL. The caller must keep 
+  //  the portion of data covered by *pdatalen bytes in tact until ngtcp2_callbacks.acked_stream_data_offset 
+  //  indicates that they are acknowledged by a remote endpoint or the stream is closed.
   uint8_t buf[1280];
   ngtcp2_path_storage ps;
   ngtcp2_vec datav;
@@ -456,14 +480,42 @@ static int client_write_streams(struct client *c) {
 
   ngtcp2_path_storage_zero(&ps);
 
+
+
+
   for (;;) {
+    // Here we retreive the complete message we want to send.
+    // If there valid buffer we managed to retreive, then 'fin'
+    // is set to 1 (since it's the whole message)
     datavcnt = client_get_message(c, &stream_id, &fin, &datav, 1);
 
+    // Write stream data flags
+    // 
+    //  * NGTCP2_WRITE_STREAM_FLAG_NONE indicates no flag set.
+    //  * NGTCP2_WRITE_STREAM_FLAG_MORE indicates that more data may come, and should be coalesced into the same packet if possible.
+    //  * NGTCP2_WRITE_STREAM_FLAG_FIN indicates that a passed data is the final part of a stream.
     flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
     if (fin) {
       flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
     }
 
+    // From https://nghttp2.org/ngtcp2/ngtcp2_conn_writev_stream.html
+    //
+    // TODO: 
+    //
+    //  * This packet may contain frames other than STREAM frame. The packet might not contain STREAM frame if other frames occupy 
+    //    the packet. In that case, *pdatalen would be -1 if pdatalen is not NULL.
+    //
+    // NOTES:
+    //
+    //  wdatalen is the size of data consumed from our current message. This means that we might have written
+    //  something on the buffer, but it wasn't from this message at all.
+    //
+    // QUESTIONS:
+    //
+    //  * What happens when we loose a stream packet? I suppose that's where we might create a packet here that 
+    //    contains more data than current message we are trying to send.?
+    //    
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
                                        &wdatalen, flags, stream_id, &datav,
                                        datavcnt, ts);
@@ -517,6 +569,14 @@ static int client_write(struct client *c) {
   return 0;
 }
 
+// Within ngtcp2 there several timers, this will be called when there's one expiring.
+// For instance:
+//
+//  * handshake_timeout
+// 
+// Documentation: https://nghttp2.org/ngtcp2/programmers-guide.html#timers
+// 
+// TODO: check ./tests/ngtcp2_conn_test.c for more details.
 static int client_handle_expiry(struct client *c) {
   int rv = ngtcp2_conn_handle_expiry(c->conn, timestamp());
   if (rv != 0) {
@@ -701,6 +761,19 @@ static int client_quic_init(struct client* c,
         },
         NULL,
     };
+    
+
+    // Most important callbacks set by us:
+    //
+    //  * recv_stream_data
+    //
+    // Callbacks that we should put aside for now:
+    //
+    //  * stream_open
+    //  * remove_connection_id
+    //  * ack_datagram
+    //  * lost_datagram
+
     ngtcp2_callbacks callbacks = {
         ngtcp2_crypto_client_initial_cb,
         NULL, /* recv_client_initial */
@@ -713,10 +786,10 @@ static int client_quic_init(struct client* c,
         recv_stream_data, /* recv_stream_data */
         NULL, /* acked_stream_data_offset */
         stream_open, /* stream_open */
-        stream_close, /* stream_close */
+        stream_close_cb, /* stream_close */
         NULL, /* recv_stateless_reset */
         ngtcp2_crypto_recv_retry_cb,
-        extend_max_local_streams_bidi,
+        NULL, /* extend_max_local_streams_bidi */
         NULL, /* extend_max_local_streams_uni */
         rand_cb,
         get_new_connection_id_cb,
@@ -843,6 +916,7 @@ static int client_init(struct client* c) {
     c->handlePoll.data = c;
     //
     uv_poll_start(&c->handlePoll, UV_READABLE, read_cb);
+    // TODO: reenable this.
     //uv_poll_start(&c->handlePoll, UV_WRITABLE, write_cb);
 
     uv_timer_start(&c->timer, timer_cb, 0, 1000.f);
@@ -874,6 +948,9 @@ static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* mess
     if (rv != 0) {
         return 0;
     }
+    // This is where we are supposed to queue data for write queue (IO Async)
+    // Right now changing it like this ins't problematic yet because we don't send a lot of data at the same time.
+    // stream data.
 
     fprintf(debug_file, "WRITING TO client uni: stream_id: %ld, message: %s, size: %ld\n", stream_id, message, strlen(message));
     c->stream.stream_id = stream_id;
@@ -1047,7 +1124,18 @@ static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
 // MAIN SECITON
 //
 /////////////////////////////////////
-
+//
+// Explanation of flow:
+//
+//  1. CLIENT: We connect to server
+//  2. CLIENT: When we receive handshake_completed we send_hello_message_to_server ("HELLO Excalibur!")
+//  3. SERVER: When the server receives the hello message, it sends the UUID as a reliable message
+//  4. CLIENT: As soon as we receive the message containing the UUID (recv_stream_data), we start the timer (timer_cb) that executes every seconds.
+//     * That timer will create a unidirectional stream (reliable) to server (send_message_to_server). 
+//     * Note that at this moment, we only send the message IF there's no current stream openned. This
+//       means that we will wait until we have an available stream to send that message.
+//     * 
+//  3. We immediatly send 
 
 int main(void) {
 
@@ -1069,13 +1157,6 @@ int main(void) {
     exit(EXIT_FAILURE);
   }
 
-  /*extend_max_local_streams_bidi(c.conn,
-      10,
-      &c);*/
-     /*c.stream.data = (const uint8_t *)HELLO_WORLD;
-     c.stream.datalen = sizeof(HELLO_WORLD) - 1;*/
-  //  int rv = send_hello_world_packet(&c);
- 
 
   uv_run(&c.uv_loop, UV_RUN_DEFAULT);
 
