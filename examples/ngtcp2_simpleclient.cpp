@@ -937,24 +937,19 @@ static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* mess
     int rv;
     int64_t stream_id;
 
-    if (c->stream.stream_id != -1) {
-        fprintf(debug_file, "Stream already opened %ld, not sending %s\n", c->stream.stream_id, message);
-        return 0;
+    if (c->stream.stream_id == -1) {
+        fprintf(debug_file, " Invalid Stream?, not sending %s\n", c->stream.stream_id, message);
+        return -1;
     }
 
-    rv = ngtcp2_conn_open_uni_stream(conn, &stream_id, NULL);
-    if (rv != 0) {
-        return 0;
-    }
     // This is where we are supposed to queue data for write queue (IO Async)
     // Right now changing it like this ins't problematic yet because we don't send a lot of data at the same time.
     // stream data.
 
     fprintf(debug_file, "WRITING TO client uni: stream_id: %ld, message: %s, size: %ld\n", stream_id, message, strlen(message));
-    c->stream.stream_id = stream_id;
     c->stream.data = (const uint8_t*)message;
     c->stream.datalen = strlen(message);
-    fprintf(debug_file, "WROTE TO client uni: c->stream.stream_id %ld, c->stream.data %s, c->stream.datalen %ld\n", c->stream.stream_id, c->stream.data, c->stream.datalen);
+    fprintf(debug_file, "  WROTE TO client uni: c->stream.stream_id %ld, c->stream.data %s, c->stream.datalen %ld\n", c->stream.stream_id, c->stream.data, c->stream.datalen);
 
     return 0;
 }
