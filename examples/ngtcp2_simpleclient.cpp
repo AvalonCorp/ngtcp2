@@ -556,14 +556,6 @@ static int client_write(struct client *c) {
     return -1;
   }
 
-  expiry = ngtcp2_conn_get_expiry(c->conn);
-  now = timestamp();
-
-  t = expiry < now ? 1e-9 : (uint64_t)(expiry - now) / NGTCP2_SECONDS;
-  c->repeat = t;
-
-  uv_timer_again(&c->timer);
-
   return 0;
 }
 
@@ -911,14 +903,16 @@ static int client_init(struct client* c) {
 
     uv_poll_init_socket(&c->uv_loop, &c->handlePoll, c->fd);
     uv_timer_init(&c->uv_loop, &c->timer);
+    c->timer.data = c;
+
     c->handlePoll.data = c;
     //
     uv_poll_start(&c->handlePoll, UV_READABLE, read_cb);
     // TODO: reenable this.
     //uv_poll_start(&c->handlePoll, UV_WRITABLE, write_cb);
-
-    uv_timer_start(&c->timer, timer_cb, 0, 1000.f);
-    c->timer.data = c;
+    
+    // We start that timer when we received the first reliable message.
+    //uv_timer_start(&c->timer, timer_cb, 0, 1000.f);
 
     return 0;
 }
