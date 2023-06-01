@@ -111,8 +111,6 @@ static int numeric_host(const char* hostname) {
 }
 
 
-
-
 ///////////////////////////////
 //
 // ngtcp2 structures
@@ -343,12 +341,12 @@ static int recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id
     // EXCALIBUR API
     if (uuid.empty()) {
         // Display just the UUID (starts at character with offset 9)
-        fprintf(debug_file, "  Does this look like UUID? %s\n", data + 9);
-        uuid = (char*)data+9;
+        uuid = (char*)data + 9;
+        fprintf(debug_file, "  Here's our UUID: %s\n", uuid.c_str());
 
-
-        // TODO: should be a separate thread/ev_loop sending messages on an interval
-        send_test_message_to_server(conn, user_data);
+        // Starting the timer that will send unreliable messages.
+        struct client* c = (struct client*)user_data;
+        uv_timer_start(&c->timer, timer_cb, 0, 1000.f);
     }
 
     else {
@@ -1121,7 +1119,7 @@ static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
 
 /////////////////////////////////////
 //
-// MAIN SECITON
+// MAIN SECTION
 //
 /////////////////////////////////////
 //
