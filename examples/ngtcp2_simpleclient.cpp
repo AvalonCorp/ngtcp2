@@ -834,6 +834,7 @@ static int client_quic_init(struct client* c,
     params.initial_max_streams_uni = 3;
     params.initial_max_stream_data_bidi_local = 128 * 1024;
     params.initial_max_data = 1024 * 1024;
+    params.max_datagram_frame_size = 65535;
 
     rv =
         ngtcp2_conn_client_new(&c->conn, &dcid, &scid, &path, NGTCP2_PROTO_VER_V1,
