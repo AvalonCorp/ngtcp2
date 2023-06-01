@@ -59,3 +59,5 @@ examples/Debug
 examples/Debug/*.txt
 *.vcxproj.user
 examples/simpleclient.dir
+examples/debug.*
+examples/nohup.out
