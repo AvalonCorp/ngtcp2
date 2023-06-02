@@ -83,6 +83,7 @@ static int send_hello_message_to_server(ngtcp2_conn*, void*);
 static int extend_max_local_streams_bidi(ngtcp2_conn*, uint64_t, void*);
 static int send_test_message_to_server(ngtcp2_conn*, void*);
 static int send_message_to_server(ngtcp2_conn*, void*, char*);
+static int send_unreliable_message_to_server(ngtcp2_conn* conn, void* user_data);
 // When enabled, this callback will call send_test_message_to_server 
 static void timer_cb(uv_timer_t* w);
 
@@ -468,7 +469,7 @@ static size_t client_get_message(struct client *c, int64_t *pstream_id,
 
 static int client_write_streams(struct client *c) {
   ngtcp2_tstamp ts = timestamp();
-  ngtcp2_pkt_info pi;
+  ngtcp2_pkt_info pi = { NGTCP2_ECN_NOT_ECT };
   ngtcp2_ssize nwrite;
   // TODO? buffer must be kept alive until we receive ngtcp2_callbacks.acked_stream_data_offset 
   //
@@ -589,7 +590,7 @@ static int client_handle_expiry(struct client *c) {
 
 static void client_close(struct client *c) {
   ngtcp2_ssize nwrite;
-  ngtcp2_pkt_info pi;
+  ngtcp2_pkt_info pi = { NGTCP2_ECN_NOT_ECT };
   ngtcp2_path_storage ps;
   uint8_t buf[1280];
 
@@ -656,7 +657,15 @@ static void timer_cb(uv_timer_t *w) {
     client_close(c);
   }
 
-  send_test_message_to_server(c->conn, c);
+  static int nb_of_calls = 0;
+  int result;
+  if (nb_of_calls % 2 == 0)
+      result = send_test_message_to_server(c->conn, c);
+  else
+      result = send_unreliable_message_to_server(c->conn, c);
+
+  if (result != 0)
+    ++nb_of_calls;
 }
 
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
@@ -942,9 +951,14 @@ static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* mess
     int rv;
     int64_t stream_id;
 
-    if (c->stream.stream_id == -1) {
-        fprintf(debug_file, " Invalid Stream?, not sending %s\n", c->stream.stream_id, message);
+    if (c->stream.stream_id != -1) {
+        fprintf(debug_file, "Stream already opened %ld, not sending %s\n", c->stream.stream_id, message);
         return -1;
+    }
+
+    rv = ngtcp2_conn_open_uni_stream(conn, &stream_id, NULL);
+    if (rv != 0) {
+        return 0;
     }
 
     // This is where we are supposed to queue data for write queue (IO Async)
@@ -952,9 +966,54 @@ static int send_message_to_server(ngtcp2_conn* conn, void* user_data, char* mess
     // stream data.
 
     fprintf(debug_file, "WRITING TO client uni: stream_id: %ld, message: %s, size: %ld\n", stream_id, message, strlen(message));
+    c->stream.stream_id = stream_id;
     c->stream.data = (const uint8_t*)message;
     c->stream.datalen = strlen(message);
     fprintf(debug_file, "  WROTE TO client uni: c->stream.stream_id %ld, c->stream.data %s, c->stream.datalen %ld\n", c->stream.stream_id, c->stream.data, c->stream.datalen);
+
+    return 0;
+}
+
+static int dgram_id = 0;
+
+static const char* const unreliable_message = "Unreliable message id=%d";
+
+static int send_unreliable_message_to_server(ngtcp2_conn* conn, void* user_data) {
+    struct client* c = static_cast<struct client*>(user_data);
+    int rv;
+    int64_t stream_id;
+
+    uint8_t buf[1280];
+    ngtcp2_path path;
+    path.local.addrlen = c->local_addrlen;
+    path.local.addr = (struct sockaddr*)&c->local_addr;
+    path.remote.addrlen = sizeof(c->remote_addr);
+    path.remote.addr = (struct sockaddr*)&c->remote_addr;
+    int accepted = 0;
+
+    ngtcp2_vec data;
+
+    ngtcp2_pkt_info pi = { NGTCP2_ECN_NOT_ECT };
+
+    // Building the message
+    char message_buffer[1024];
+    snprintf(message_buffer, sizeof(message_buffer), unreliable_message, dgram_id);
+    data.base = (uint8_t*)message_buffer;
+    data.len = strlen(message_buffer);
+
+    ngtcp2_ssize nwrite = ngtcp2_conn_writev_datagram(conn, &path, &pi, buf, sizeof(buf), &accepted, 0 /* flags */, dgram_id, &data, 1, timestamp());
+    
+    ++dgram_id;
+
+    if (nwrite < 0) {
+        fprintf(stderr, "ngtcp2_conn_writev_stream: %s\n",
+            ngtcp2_strerror((int)nwrite));
+        return -1;
+    }
+
+    fprintf(debug_file, "WRITING datagram to client: message: %s, size: %ld\n", data.base, data.len);
+
+    client_send_packet(c, buf, (size_t)nwrite);
 
     return 0;
 }
@@ -1132,7 +1191,7 @@ static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
 //     * That timer will create a unidirectional stream (reliable) to server (send_message_to_server). 
 //     * Note that at this moment, we only send the message IF there's no current stream openned. This
 //       means that we will wait until we have an available stream to send that message.
-//     * 
+// 
 //  3. We immediatly send 
 
 int main(void) {
