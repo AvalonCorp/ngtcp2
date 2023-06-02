@@ -357,7 +357,17 @@ static int recv_stream_data(ngtcp2_conn* conn, uint32_t flags, int64_t stream_id
 }
 
 
+// https://nghttp2.org/ngtcp2/types.html#c.ngtcp2_acked_stream_data_offset
+//
+// From  what I can see for the API, there's really a concept of a continuous stream of data. This callback really considers that we confirm 
+// an offset+datalen of a stream.
+// 
+int acked_stream_data_offset_cb(ngtcp2_conn* conn, int64_t stream_id, uint64_t offset, uint64_t datalen, void* user_data, void* stream_user_data)
+{
+    fprintf(debug_file, "ACK STREAM DATA OFFSET: STREAMID:%" PRId64 ", OFFSET:%" PRIu64 ", len:%" PRIu64 "\n", stream_id, offset, datalen);
 
+    return 0;
+}
 
 static int client_read(struct client *c) {
   uint8_t buf[65536];
@@ -774,7 +784,7 @@ static int client_quic_init(struct client* c,
         ngtcp2_crypto_decrypt_cb,
         ngtcp2_crypto_hp_mask_cb,
         recv_stream_data, /* recv_stream_data */
-        NULL, /* acked_stream_data_offset */
+        acked_stream_data_offset_cb, /* acked_stream_data_offset */
         stream_open, /* stream_open */
         stream_close_cb, /* stream_close */
         NULL, /* recv_stateless_reset */
