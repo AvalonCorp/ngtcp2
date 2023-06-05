@@ -1187,12 +1187,10 @@ static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
 //  1. CLIENT: We connect to server
 //  2. CLIENT: When we receive handshake_completed we send_hello_message_to_server ("HELLO Excalibur!")
 //  3. SERVER: When the server receives the hello message, it sends the UUID as a reliable message
-//  4. CLIENT: As soon as we receive the message containing the UUID (recv_stream_data), we start the timer (timer_cb) that executes every seconds.
-//     * That timer will create a unidirectional stream (reliable) to server (send_message_to_server). 
-//     * Note that at this moment, we only send the message IF there's no current stream openned. This
-//       means that we will wait until we have an available stream to send that message.
-// 
-//  3. We immediatly send 
+//  4. CLIENT: As soon as we receive the message containing the UUID (recv_stream_data), we start the timer (timer_cb) that executes every seconds. It will alternatively do either:
+//       * Create a unidirectional stream (reliable) to server and send the message (send_message_to_server). Note that at this moment, we only send the message IF there's no current stream openned. This
+//         means that we will wait until we have an available stream to send that message.
+//       * Send an unreliable message (send_unreliable_message_to_server)
 
 int main(void) {
 
