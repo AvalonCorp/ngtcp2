@@ -120,7 +120,7 @@ message(WARNING LIBUV_FOUND=${LIBUV_FOUND})
 
 if(LIBUV_FOUND AND HAVE_OPENSSL AND WIN32)
   set(client_SOURCES
-    ngtcp2_simpleclient.cpp
+    simpleclient_win32.cc
   )
 
   set(ossl_INCLUDE_DIRS
@@ -144,14 +144,14 @@ if(LIBUV_FOUND AND HAVE_OPENSSL AND WIN32)
     ${LIBUV_LIBRARIES}
   )
 
-  add_executable(ngtcp2_sample_client ${client_SOURCES})
+  add_executable(simpleclient_win32 ${client_SOURCES})
 
-  set_target_properties(ngtcp2_sample_client PROPERTIES
+  set_target_properties(simpleclient_win32 PROPERTIES
     COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
   )
 
-  target_include_directories(ngtcp2_sample_client PUBLIC ${ossl_INCLUDE_DIRS})
-  target_link_libraries(ngtcp2_sample_client ${ossl_static_LIBS})
+  target_include_directories(simpleclient_win32 PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(simpleclient_win32 ${ossl_static_LIBS})
 
 endif()
 

@@ -61,3 +61,4 @@ examples/Debug/*.txt
 examples/simpleclient.dir
 examples/debug.*
 examples/nohup.out
+examples/simpleclient_win32.dir/

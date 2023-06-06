@@ -657,6 +657,10 @@ static void timer_cb(uv_timer_t *w) {
     client_close(c);
   }
 
+
+  // For now, let's not try to send unreliable messages.
+  // This is because we don't expect clients to do so.
+#if 0
   static int nb_of_calls = 0;
   int result;
   if (nb_of_calls % 2 == 0)
@@ -666,6 +670,11 @@ static void timer_cb(uv_timer_t *w) {
 
   if (result != 0)
     ++nb_of_calls;
+#else
+  send_test_message_to_server(c->conn, c);
+#endif
+
+
 }
 
 static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
@@ -1191,6 +1200,7 @@ static int extend_max_local_streams_bidi(ngtcp2_conn* conn,
 //       * Create a unidirectional stream (reliable) to server and send the message (send_message_to_server). Note that at this moment, we only send the message IF there's no current stream openned. This
 //         means that we will wait until we have an available stream to send that message.
 //       * Send an unreliable message (send_unreliable_message_to_server)
+//       * 2023/06/06 NOTE: for now we disabled send_unreliable_message_to_server, so we only send reliable messages (send_message_to_server)
 
 int main(void) {
 
