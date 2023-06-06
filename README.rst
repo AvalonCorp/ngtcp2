@@ -71,15 +71,10 @@ Build from git
    $ cd openssl
    $ # For Linux
    $ ./config enable-tls1_3 --prefix=$PWD/build
+   OR when troubleshooting:
+   $ ./config enable-tls1_3  enable-ssl-trace --prefix=$PWD/build
    $ make -j$(nproc)
    $ make install_sw
-   $ cd ..
-   $ git clone https://github.com/ngtcp2/nghttp3
-   $ cd nghttp3
-   $ autoreconf -i
-   $ ./configure --prefix=$PWD/build --enable-lib-only
-   $ make -j$(nproc) check
-   $ make install
    $ cd ..
    $ git clone https://github.com/ngtcp2/ngtcp2
    $ cd ngtcp2
@@ -89,7 +84,10 @@ Build from git
    $ # CPPFLAGS="-I/opt/local/include" to ./configure.
    $ # For OpenSSL >= v3.0.0, replace "openssl/build/lib" with
    $ # "openssl/build/lib64".
-   $ ./configure PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib"
+   $ # ./configure PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib"
+   $ ./configure PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib" OPENSSL_CFLAGS="-I$PWD/../openssl/include"
+  
+   
    $ make -j$(nproc) check
 
 Client/Server
