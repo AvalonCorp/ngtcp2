@@ -26,6 +26,8 @@ cmake_minimum_required(VERSION 3.1)
 
 # Allow setting VISIBILITY_PRESET on static library targets without warning.
 cmake_policy(SET CMP0063 NEW)
+# "find_package()" uses "<PackageName>_ROOT" variables.
+cmake_policy(SET CMP0074 NEW)
 
 # XXX using 0.1.90 instead of 0.2.0-DEV
 project(ngtcp2 VERSION 0.15.90)
@@ -108,6 +110,13 @@ if(ENABLE_JEMALLOC)
   find_package(Jemalloc)
 endif()
 find_package(Libev 4.11)
+find_package(libuv REQUIRED)
+if (libuv_FOUND)
+  set(HAVE_LIBUV TRUE)
+else()
+  set(HAVE_LIBUV FALSE)
+endif()
+
 find_package(Libnghttp3 0.0.0)
 find_package(CUnit 2.1)
 enable_testing()
@@ -363,4 +372,5 @@ message(STATUS "summary of build options:
       Libev:          ${HAVE_LIBEV} (LIBS='${LIBEV_LIBRARIES}')
       BoringSSL:      ${HAVE_BORINGSSL} (LIBS='${BORINGSSL_LIBRARIES}')
       Jemalloc:       ${HAVE_JEMALLOC} (LIBS='${JEMALLOC_LIBRARIES}')
+      LibUV:          ${HAVE_LIBUV} (LIBS='${LIBUV_LIBRARIES}')
 ")

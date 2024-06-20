@@ -1426,11 +1426,7 @@ int ngtcp2_crypto_recv_crypto_data_cb(ngtcp2_conn *conn,
   (void)offset;
   (void)user_data;
 
-//    printf("START DATA\n");
-    for(int i = 0; i < datalen; i++){
-        printf("%c", data[i]);
-    }
-//    printf("\nEND DATA\n");
+
   if (ngtcp2_crypto_read_write_crypto_data(conn, crypto_level, data, datalen) !=
       0) {
       printf("Failed in ngtcp2_crypto_read_write_crypto_data with data %s with length %ld\n", data, datalen);

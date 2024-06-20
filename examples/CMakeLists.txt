@@ -116,3 +116,77 @@ if(LIBEV_FOUND AND HAVE_BORINGSSL)
 
 endif()
 
+message(WARNING LIBUV_FOUND=${LIBUV_FOUND})
+
+if(LIBUV_FOUND AND HAVE_OPENSSL AND WIN32)
+  set(client_SOURCES
+    simpleclient_win32.cc
+  )
+
+  set(ossl_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/lib/includes
+    ${CMAKE_BINARY_DIR}/lib/includes
+    ${CMAKE_SOURCE_DIR}/third-party
+    ${CMAKE_SOURCE_DIR}/crypto/includes
+
+    ${JEMALLOC_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIRS}
+    ${LIBUV_INCLUDE_DIRS}
+  )
+
+  set(ossl_static_LIBS
+    ngtcp2_crypto_openssl_static
+    ngtcp2_static
+    wsock32
+    ws2_32
+    ${JEMALLOC_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+  )
+
+  add_executable(simpleclient_win32 ${client_SOURCES})
+
+  set_target_properties(simpleclient_win32 PROPERTIES
+    COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
+  )
+
+  target_include_directories(simpleclient_win32 PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(simpleclient_win32 ${ossl_static_LIBS})
+
+endif()
+
+if(LIBUV_FOUND AND HAVE_OPENSSL AND UNIX)
+  set(client_SOURCES
+    simpleclient.c
+  )
+
+  set(ossl_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/lib/includes
+    ${CMAKE_BINARY_DIR}/lib/includes
+    ${CMAKE_SOURCE_DIR}/third-party
+    ${CMAKE_SOURCE_DIR}/crypto/includes
+
+    ${JEMALLOC_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIRS}
+    ${LIBUV_INCLUDE_DIRS}
+  )
+
+  set(ossl_LIBS
+    ngtcp2_crypto_openssl
+    ngtcp2
+    ${JEMALLOC_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+  )
+
+  add_executable(simpleclient ${client_SOURCES})
+
+  set_target_properties(simpleclient PROPERTIES
+    COMPILE_FLAGS "${WARNCXXFLAGS} -DENABLE_EXAMPLE_OPENSSL -DWITH_EXAMPLE_OPENSSL"
+  )
+
+  target_include_directories(simpleclient PUBLIC ${ossl_INCLUDE_DIRS})
+  target_link_libraries(simpleclient ${ossl_LIBS})
+
+endif()
+

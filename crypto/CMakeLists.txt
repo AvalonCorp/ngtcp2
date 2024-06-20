@@ -36,5 +36,4 @@ if(HAVE_BORINGSSL)
 elseif(ENABLE_BORINGSSL)
   message(WARNING "libngtcp2_crypto_boringssl library is disabled due to lack of good BoringSSL")
 endif()
-1
 
